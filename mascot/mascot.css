@@ -1,0 +1,11 @@
+.mascot-enter { display: inline-block; animation: mascot-appear 650ms ease-out both; }
+.mascot-float { display: block; animation: mascot-float 5s ease-in-out infinite; }
+.mascot-image { display: block; width: var(--mascot-width, 140px); height: auto; transition: transform 250ms ease; transform-origin: 50% 85%; }
+.mascot-enter:hover .mascot-image { transform: rotate(-4deg) scale(1.03); }
+@keyframes mascot-appear { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes mascot-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
+@media (prefers-reduced-motion: reduce) {
+  .mascot-enter, .mascot-float { animation: none; }
+  .mascot-image { transition: none; }
+  .mascot-enter:hover .mascot-image { transform: none; }
+}
