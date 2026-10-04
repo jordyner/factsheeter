@@ -1006,7 +1006,7 @@ function openDrawer(ticker, focusDim) {
       <div><h2>${esc(f.ticker)}</h2><div class="name muted">${esc(f.name)}</div></div>
       <button class="x" id="closeDrawer" aria-label="${esc(t("closeDetails"))}">×</button>
     </div>
-    ${f.description ? `<div class="bubble"><img src="/static/img/graphite-bull-sm.webp" width="320" height="244" alt="" class="mascot"><p lang="en">${esc(f.description)}${t("descNote") ? `<span class="descnote" lang="${LANG}">${esc(t("descNote"))}</span>` : ""}</p></div>` : ""}
+    ${f.description ? `<div class="bubble"><p lang="en">${esc(f.description)}${t("descNote") ? `<span class="descnote" lang="${LANG}">${esc(t("descNote"))}</span>` : ""}</p></div>` : ""}
 
     <div class="dhero">
       <div class="label">${isNum(si) ? esc(t("annSince", f.inception_date.slice(0, 4))) : esc(t("tooNewAnn"))}</div>

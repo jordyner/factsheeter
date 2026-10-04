@@ -35,8 +35,8 @@ with sync_playwright() as p:
     check(len(pg.query_selector_all(".city")) == 6, "your time + 5 exchanges listed")
     check(pg.inner_text("#spotTitle") != "", f"spotlight shows first fund: {pg.inner_text('#spotTitle')}")
     pg.wait_for_timeout(700)
-    pg.screenshot(path=f"{OUT}/v10-home.png")
-    pg.screenshot(path=f"{OUT}/v10-home-full.png", full_page=True)
+    pg.screenshot(path=f"{OUT}/v13-home.png")
+    pg.screenshot(path=f"{OUT}/v13-home-full.png", full_page=True)
 
     # --- combined filters: age >= 10 AND SI >= 7 AND fee <= 0.30
     pg.click("#toggleFilters")
@@ -54,7 +54,7 @@ with sync_playwright() as p:
     check(n3 == len(expect), f"3 combined filters: app {n3} == expected {len(expect)}")
     chips = pg.eval_on_selector_all("#activeBar .achip", "els => els.map(e => e.innerText)")
     check(len(chips) == 3, f"3 active chips: {chips}")
-    pg.screenshot(path=f"{OUT}/v10-filters.png")
+    pg.screenshot(path=f"{OUT}/v13-filters.png")
 
     # --- OR within category, AND across
     pg.click("#fTypes [data-type='Equity']"); pg.click("#fTypes [data-type='Fixed Income']")
@@ -135,20 +135,20 @@ with sync_playwright() as p:
     pg.wait_for_selector("#holdingsSec .hold", timeout=5000)
     nh = len(pg.query_selector_all("#holdingsSec .hold"))
     check(nh == 10, f"side panel lists top {nh} holdings with weights")
-    pg.screenshot(path=f"{OUT}/v10-drawer.png")
+    pg.screenshot(path=f"{OUT}/v13-drawer.png")
     pg.keyboard.press("Escape")
     pg.click("#compareOpen"); pg.wait_for_timeout(200)
-    pg.screenshot(path=f"{OUT}/v10-compare.png")
+    pg.screenshot(path=f"{OUT}/v13-compare.png")
     pg.keyboard.press("Escape")
 
     # --- cards view + empty state
     pg.click("#viewSeg [data-v='cards']"); pg.wait_for_timeout(300)
     check(pg.is_visible(".card") and not pg.is_visible("#tableView"), "cards view toggles")
-    pg.screenshot(path=f"{OUT}/v10-cards.png")
+    pg.screenshot(path=f"{OUT}/v13-cards.png")
     pg.click("#viewSeg [data-v='table']")
     pg.fill("#minSI", "90"); pg.wait_for_timeout(150)
-    check(pg.is_visible("#emptyState") and pg.is_visible("#emptyClear"), "empty state with mascot")
-    pg.screenshot(path=f"{OUT}/v10-empty.png")
+    check(pg.is_visible("#emptyState") and pg.is_visible("#emptyClear"), "empty state shown")
+    pg.screenshot(path=f"{OUT}/v13-empty.png")
     pg.click("#emptyClear")
 
     # --- filters from the table header: funnel -> pop-up -> tag
@@ -190,19 +190,20 @@ with sync_playwright() as p:
     # --- dark + mobile
     dk = b.new_page(viewport={"width": 1440, "height": 900}, color_scheme="dark")
     dk.goto(URL); dk.wait_for_selector("#tbody tr"); dk.wait_for_timeout(700)
-    dk.screenshot(path=f"{OUT}/v10-dark.png")
+    dk.screenshot(path=f"{OUT}/v13-dark.png")
     mp = b.new_page(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
     mp.goto(URL); mp.wait_for_selector("#tbody tr"); mp.wait_for_timeout(700)
     sw = mp.evaluate("document.documentElement.scrollWidth")
     check(sw <= 390, f"no horizontal page scroll on mobile (scrollWidth {sw})")
-    mp.screenshot(path=f"{OUT}/v10-mobile.png")
+    mp.screenshot(path=f"{OUT}/v13-mobile.png")
     mp.evaluate("document.querySelector('#tableView').scrollLeft = 300"); mp.wait_for_timeout(100)
-    mp.screenshot(path=f"{OUT}/v10-mobile-scrolled.png")
+    mp.screenshot(path=f"{OUT}/v13-mobile-scrolled.png")
 
     # --- reduced motion
-    rm = b.new_page(reduced_motion="reduce"); rm.goto(URL); rm.wait_for_selector("#tbody tr")
-    anim = rm.evaluate("getComputedStyle(document.querySelector('.spot-bull')).animationName")
-    check(anim == "none", f"reduced motion disables mascot animation ({anim})")
+    nm = b.new_page(); nm.goto(URL); nm.wait_for_selector("#tbody tr")
+    nm.click("#tbody tr[data-t='IVV'] .nm"); nm.wait_for_timeout(300)
+    bulls = nm.evaluate("[...document.querySelectorAll('img')].filter(i => /bull|mascot/.test(i.src)).length")
+    check(bulls == 0, f"no mascot images on the page or in the fund panel ({bulls})")
 
     check(not errors, f"no console errors {errors}")
     b.close()

@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Factsheeter</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Orbitron:wght@500;600;700;800;900&family=Oxanium:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem("fs.theme"); } catch (e) {}
+    if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body>
+<div class="frame">
+<header class="top">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><path d="M3 24 11 8l6 10 4-6 8 12h-6l-2-3-4 3-5-8-3 8z" fill="currentColor"/></svg>
+    <span class="brand-name">Factsheeter</span>
+  </div>
+  <div class="mkt" id="nyStatus" aria-live="off"></div>
+  <div id="snapshot" class="snapshot"></div>
+  <div class="seg lang" id="langSeg" role="radiogroup" aria-label="Language / Jazyk">
+    <button data-lang="en" role="radio" aria-checked="true" lang="en">EN</button>
+    <button data-lang="cs" role="radio" aria-checked="false" lang="cs">CS</button>
+  </div>
+  <button class="theme-btn" id="themeBtn" type="button"></button>
+</header>
+
+<section class="intro" aria-labelledby="introTitle">
+  <img class="intro-photo" id="introPhoto" src="/static/img/skyline-day.jpg" alt="" width="2400" height="960">
+  <div class="intro-shade" aria-hidden="true"></div>
+  <img class="intro-bull mascot" src="/static/img/graphite-bull.webp" width="960" height="731" alt="">
+  <div class="intro-text">
+    <h1 id="introTitle" data-i18n="introTitle"></h1>
+    <p class="intro-sub" id="introSub"></p>
+    <div class="qstart" id="quickStarts" role="group"></div>
+  </div>
+  <a class="intro-credit" href="https://commons.wikimedia.org/wiki/File:Lower_Manhattan_from_Jersey_City_November_2014_panorama_2.jpg" target="_blank" rel="noopener">Photo: King of Hearts, CC BY-SA</a>
+</section>
+</div>
+
+<section class="toolbar" id="toolbar">
+  <input id="q" type="search" data-i18n-ph="searchPh" data-i18n-aria="searchPh">
+  <button id="toggleFilters" class="btn" aria-expanded="false" aria-controls="filterPanel"><span data-i18n="filtersBtn"></span><span id="filterCount" class="pill" hidden></span></button>
+  <details class="menu" id="colMenu">
+    <summary class="btn" data-i18n="columnsBtn"></summary>
+    <div class="menu-pop" id="colList" role="group"></div>
+  </details>
+  <div class="count" aria-live="polite"><span id="countNum">—</span> <span id="countOf"></span></div>
+  <div class="seg" id="viewSeg" role="radiogroup">
+    <button data-v="table" role="radio" aria-checked="true" data-i18n="viewTable"></button>
+    <button data-v="cards" role="radio" aria-checked="false" data-i18n="viewCards"></button>
+  </div>
+</section>
+
+<section id="filterPanel" class="filterpanel" hidden>
+  <div class="bubble logic">
+    <img src="/static/img/graphite-bull-sm.webp" width="320" height="244" alt="" class="mascot">
+    <p data-i18n-html="logic"></p>
+  </div>
+  <div class="fgrid">
+    <div class="fbox">
+      <div class="label"><span data-i18n="fAsset"></span> <span class="or" data-i18n="anyOf"></span></div>
+      <div class="chips" id="fTypes"></div>
+    </div>
+    <div class="fbox">
+      <div class="label"><span data-i18n="fGeo"></span> <span class="or" data-i18n="anyOf"></span></div>
+      <div class="chips" id="fGeos"></div>
+      <p class="hint" data-i18n="geoHint"></p>
+    </div>
+    <div class="fbox wide">
+      <div class="label"><span data-i18n="fSector"></span> <span class="or" data-i18n="anyOf"></span></div>
+      <div class="chips" id="fSectors"></div>
+      <div class="inline">
+        <select id="moreSectors" data-i18n-aria="moreSectors"></select>
+        <label class="inline"><span data-i18n="atLeast"></span> <input id="sectorMin" type="number" min="0" max="100" step="5" class="w-num"> <span data-i18n="sectorTail"></span></label>
+      </div>
+    </div>
+    <div class="fbox">
+      <div class="label" data-i18n="fReturn"></div>
+      <table class="rangetbl">
+        <thead><tr><th></th><th data-i18n="min"></th><th data-i18n="max"></th></tr></thead>
+        <tbody>
+          <tr><th data-i18n="p_si"></th><td><input id="minSI" type="number" step="0.5" aria-label="min"></td><td><input id="maxSI" type="number" step="0.5" aria-label="max"></td></tr>
+          <tr><th data-i18n="p_5y"></th><td><input id="min5" type="number" step="0.5" aria-label="min"></td><td><input id="max5" type="number" step="0.5" aria-label="max"></td></tr>
+          <tr><th data-i18n="p_10y"></th><td><input id="min10" type="number" step="0.5" aria-label="min"></td><td><input id="max10" type="number" step="0.5" aria-label="max"></td></tr>
+        </tbody>
+      </table>
+      <div class="inline">
+        <span class="hint" data-i18n="basedOn"></span>
+        <div class="seg" id="basis" role="radiogroup">
+          <button data-v="nav" role="radio" aria-checked="true" data-i18n="fundValue"></button>
+          <button data-v="price" role="radio" aria-checked="false" data-i18n="marketPrice"></button>
+        </div>
+      </div>
+      <p class="hint" data-i18n="youngHint"></p>
+    </div>
+    <div class="fbox">
+      <div class="label" data-i18n="fFund"></div>
+      <div class="frow"><label for="minAge" data-i18n="minAgeL"></label><input id="minAge" type="number" min="0" step="1" class="w-num"><span class="quick" data-for="minAge"><button data-q="5">5</button><button data-q="10">10</button><button data-q="20">20</button></span></div>
+      <div class="frow"><label for="maxFee" data-i18n="maxFeeL"></label><input id="maxFee" type="number" min="0" step="0.05" class="w-num"><span class="quick" data-for="maxFee"><button data-q="0.1">0.10</button><button data-q="0.3">0.30</button><button data-q="0.5">0.50</button></span></div>
+      <div class="frow"><label for="minAum" data-i18n="minAumL"></label><input id="minAum" type="number" min="0" step="50" class="w-num"><span class="quick" data-for="minAum"><button data-q="100">100</button><button data-q="1000">1000</button></span></div>
+    </div>
+    <div class="fbox">
+      <div class="label" data-i18n="fExpo"></div>
+      <p class="hint" data-i18n="expoHint"></p>
+      <div id="exps"></div>
+      <button id="addExp" class="btn small" data-i18n="addCond"></button>
+    </div>
+  </div>
+</section>
+
+<section class="statebar">
+  <div class="activebar" id="activeBar"></div>
+  <div class="sortbar" id="sortBar"></div>
+</section>
+
+<main>
+  <div id="tableView" class="tablewrap" tabindex="-1">
+    <table id="table">
+      <thead><tr id="thead"></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  <div id="cards" class="cards" hidden></div>
+  <div id="emptyState" class="state" hidden>
+    <img src="/static/img/graphite-bull-sm.webp" width="320" height="244" alt="" class="mascot">
+    <p id="stateText"></p>
+    <button id="emptyClear" class="btn" hidden data-i18n="clearAllFilters"></button>
+  </div>
+  <div class="morewrap"><button id="showMore" class="btn" hidden></button></div>
+  <p class="foot" data-i18n-html="foot"></p>
+</main>
+
+<div id="compareBar" class="comparebar" hidden>
+  <img class="cb-bull mascot" src="/static/img/graphite-bull-sm.webp" width="320" height="244" alt="">
+  <span id="compareInfo"></span>
+  <button id="compareOpen" class="btn primary"></button>
+  <button id="compareClear" class="btn ghost small" data-i18n="clear"></button>
+</div>
+
+<div id="colPop" class="colpop" hidden role="dialog"></div>
+<div id="overlay" class="overlay" hidden></div>
+<aside id="drawer" class="drawer" hidden role="dialog" aria-modal="true"></aside>
+<section id="compare" class="compare" hidden role="dialog" aria-modal="true"></section>
+
+<script src="/static/i18n.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

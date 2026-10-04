@@ -707,3 +707,8 @@ button.hold-top:focus-visible { outline: 2px solid var(--accent); outline-offset
 .hold-more { margin-left: 30px; padding-right: 24px; }
 .hold-more .hold-about, .hold-more .hold-tags { margin-left: 0; }
 @media (prefers-reduced-motion: reduce) { .hold-chev { transition: none; } }
+
+
+/* no mascot: description and filter note are plain cards */
+.bubble p { border-radius: 14px; }
+.bubble.logic { margin-bottom: 14px; }
