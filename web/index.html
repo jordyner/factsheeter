@@ -7,48 +7,53 @@
 <meta name="robots" content="noindex, nofollow">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Orbitron:wght@500;600;700;800;900&family=Oxanium:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Schibsted+Grotesk:wght@500;600;700;800&family=Orbitron:wght@500;600;700;800;900&family=Oxanium:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css">
+<script>
+  /* theme before first paint: saved choice, otherwise off-white light */
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem("fs.theme"); } catch (e) {}
+    document.documentElement.dataset.theme = t === "dark" ? "dark" : "light";
+  })();
+</script>
 </head>
 <body>
-<div class="frame">
 <header class="top">
-  <div class="brand">
+  <a class="brand" href="./" aria-label="Factsheeter">
     <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><path d="M3 24 11 8l6 10 4-6 8 12h-6l-2-3-4 3-5-8-3 8z" fill="currentColor"/></svg>
     <span class="brand-name">Factsheeter</span>
-  </div>
-  <div id="snapshot" class="label snapshot"></div>
-  <div class="seg lang" id="langSeg" role="radiogroup" aria-label="Language / Jazyk">
-    <button data-lang="en" role="radio" aria-checked="true" lang="en">EN</button>
-    <button data-lang="cs" role="radio" aria-checked="false" lang="cs">CS</button>
-  </div>
-  <button class="dots" id="dotsBtn" data-i18n-aria="openFilters" data-i18n-title="openFilters"><span></span><span></span><span></span><span></span></button>
+  </a>
+  <div class="mkt" id="nyStatus"></div>
+  <nav class="topnav">
+    <button class="navlink" data-goto="etfs" data-i18n="navScreener"></button>
+    <div class="seg lang" id="langSeg" role="radiogroup" aria-label="Language / Jazyk">
+      <button data-lang="en" role="radio" aria-checked="true" lang="en">EN</button>
+      <button data-lang="cs" role="radio" aria-checked="false" lang="cs">CS</button>
+    </div>
+    <button class="theme-btn" id="themeBtn" type="button">
+      <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.6A8.5 8.5 0 0 1 9.4 3.5a8.5 8.5 0 1 0 11.1 11.1Z"/></svg>
+      <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/></svg>
+    </button>
+  </nav>
 </header>
 
-<section class="hero" aria-label="New York Stock Exchange">
-  <div class="hero-clock">
-    <div class="hero-nums" aria-hidden="true">
-      <span class="grp" id="lblH"><span id="clkH" class="hn">--</span></span><span class="colon">:</span><span class="grp" id="lblM"><span id="clkM" class="hn">--</span></span><span class="colon small">:</span><span class="hn-roll grp" id="lblS"><span id="clkSUp" class="ghost"></span><span id="clkS" class="hn small">--</span><span id="clkSDown" class="ghost"></span></span>
+<section class="intro" aria-labelledby="introTitle">
+  <canvas class="intro-bg" id="introBg" aria-hidden="true"></canvas>
+  <div class="intro-copy">
+    <h1 id="introTitle" data-i18n="introTitle"></h1>
+    <p class="intro-lead"><span data-i18n="introLine1"></span> <span data-i18n="introLine2"></span></p>
+    <div class="intro-cta">
+      <button class="cta" data-goto="etfs">
+        <span data-i18n="explore"></span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v15M6 13l6 6 6-6"/></svg>
+      </button>
+      <p class="intro-meta" id="introMeta"></p>
     </div>
-    <div class="hero-status" id="nyStatus" aria-live="polite"></div>
   </div>
-  <div class="cities" id="cities" aria-label="Stock exchanges"></div>
 </section>
 
-<section class="spot" id="spot">
-  <picture>
-    <source srcset="/static/img/skyline-night.jpg" media="(prefers-color-scheme: dark)">
-    <img class="spot-photo" src="/static/img/skyline-day.jpg" alt="" width="2400" height="960">
-  </picture>
-  <div class="spot-shade" aria-hidden="true"></div>
-  <div class="spot-text">
-    <div class="spot-kicker" id="spotKicker"></div>
-    <button class="spot-title" id="spotTitle"></button>
-  </div>
-  <div class="spot-glass" id="spotGlass"></div>
-  <a class="spot-credit" href="https://commons.wikimedia.org/wiki/File:Lower_Manhattan_from_Jersey_City_November_2014_panorama_2.jpg" target="_blank" rel="noopener" id="spotCredit">Photo: King of Hearts, CC BY-SA 3.0</a>
-</section>
-</div>
+<div id="etfs" class="screener-anchor"></div>
 
 <section class="toolbar" id="toolbar">
   <input id="q" type="search" data-i18n-ph="searchPh" data-i18n-aria="searchPh">

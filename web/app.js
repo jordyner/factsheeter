@@ -22,7 +22,7 @@ const RANGES = {
 };
 const NUM_FILTERS = Object.values(RANGES).flatMap(([lo, hi]) => [lo, hi]);
 const blankFilters = () => ({
-  q: "", types: [], geos: [], sectors: [], sectorMin: DEFAULT_SECTOR_MIN, exps: [],
+  q: "", types: [], geos: [], sectors: [], xtypes: [], xgeos: [], xsectors: [], sectorMin: DEFAULT_SECTOR_MIN, exps: [],
   ...Object.fromEntries(NUM_FILTERS.map((k) => [k, null])),
 });
 const S = { ...blankFilters(), basis: "nav", sort: structuredClone(DEFAULT_SORT), cmp: [], view: "table" };
@@ -68,9 +68,9 @@ function applyStatic() {
   document.querySelectorAll("[data-i18n-ph]").forEach((el) => { el.placeholder = t(el.dataset.i18nPh); });
   document.querySelectorAll("[data-i18n-aria]").forEach((el) => el.setAttribute("aria-label", t(el.dataset.i18nAria)));
   document.querySelectorAll("[data-i18n-title]").forEach((el) => { el.title = t(el.dataset.i18nTitle); });
-  for (const [id, k] of [["lblH", "hours"], ["lblM", "minutes"], ["lblS", "seconds"]]) $(id).dataset.l = t(k);
+  renderIntro();
+  renderThemeBtn();
   document.querySelectorAll("#langSeg button").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.lang === LANG)));
-  if (META.imported_at) $("snapshot").textContent = t("snapshot", META.imported_at.slice(0, 10));
 }
 
 function setLang(lang) {
@@ -259,10 +259,13 @@ function saveUrl() {
   if (S.types.length) p.set("a", S.types.join(","));
   if (S.geos.length) p.set("g", S.geos.join(","));
   if (S.sectors.length) p.set("sec", S.sectors.join(";"));
-  if (S.sectors.length && S.sectorMin !== DEFAULT_SECTOR_MIN) p.set("sm", S.sectorMin);
+  if (S.xtypes.length) p.set("xa", S.xtypes.join(","));
+  if (S.xgeos.length) p.set("xg", S.xgeos.join(","));
+  if (S.xsectors.length) p.set("xsec", S.xsectors.join(";"));
+  if ((S.sectors.length || S.xsectors.length) && S.sectorMin !== DEFAULT_SECTOR_MIN) p.set("sm", S.sectorMin);
   for (const [k, key] of Object.entries(URL_NUMS)) if (S[key] != null) p.set(k, S[key]);
   if (S.basis !== "nav") p.set("b", S.basis);
-  if (S.exps.length) p.set("x", S.exps.map((e) => [e.dim, e.label, e.min ?? ""].join("|")).join(";"));
+  if (S.exps.length) p.set("x", S.exps.map((e) => [e.dim, e.label, e.min ?? "", e.op === "le" ? "le" : ""].join("|")).join(";"));
   const s = S.sort.map((r) => `${r.key}:${r.dir}`).join(",");
   if (s !== DEFAULT_SORT.map((r) => `${r.key}:${r.dir}`).join(",")) p.set("s", s);
   if (S.cmp.length) p.set("c", S.cmp.join(","));
@@ -279,12 +282,15 @@ function loadUrl() {
   S.types = list("a");
   S.geos = list("g").filter((g) => GEO_TESTS[g]);
   S.sectors = list("sec", ";");
+  S.xtypes = list("xa");
+  S.xgeos = list("xg").filter((g) => GEO_TESTS[g]);
+  S.xsectors = list("xsec", ";");
   if (p.has("sm")) S.sectorMin = Number(p.get("sm"));
   for (const [k, key] of Object.entries(URL_NUMS)) S[key] = p.has(k) && p.get(k) !== "" && isNum(Number(p.get(k))) ? Number(p.get(k)) : null;
   S.basis = p.get("b") === "price" ? "price" : "nav";
   S.exps = list("x", ";").map((s) => {
-    const [dim, label, min] = s.split("|");
-    return { dim, label, min: min === "" || min == null ? null : Number(min) };
+    const [dim, label, min, op] = s.split("|");
+    return { dim, label, min: min === "" || min == null ? null : Number(min), op: op === "le" ? "le" : "ge" };
   });
   S.sort = list("s").map((s) => { const [key, d] = s.split(":"); return { key, dir: Number(d) === 1 ? 1 : -1 }; })
     .filter((r) => SORTS[r.key]);
@@ -304,6 +310,10 @@ function passes(f) {
   if (S.types.length && !S.types.includes(f.asset_class)) return false;
   if (S.geos.length && !S.geos.some((g) => GEO_TESTS[g](f))) return false;
   if (S.sectors.length && !S.sectors.some((s) => expo(f, "sector", s) >= (S.sectorMin ?? 0.0001))) return false;
+  // excluded options: a fund matching any of them is dropped
+  if (S.xtypes.includes(f.asset_class)) return false;
+  if (S.xgeos.some((g) => GEO_TESTS[g](f))) return false;
+  if (S.xsectors.some((s) => expo(f, "sector", s) >= (S.sectorMin ?? 0.0001))) return false;
   // across categories: AND
   for (const [lo, hi, get] of Object.values(RANGES)) {
     if (S[lo] == null && S[hi] == null) continue;
@@ -312,7 +322,11 @@ function passes(f) {
     if (S[lo] != null && v < S[lo]) return false;
     if (S[hi] != null && v > S[hi]) return false;
   }
-  for (const e of S.exps) if (expo(f, e.dim, e.label) < (e.min ?? 0.0001)) return false;
+  for (const e of S.exps) {
+    if (e.op === "le") {   // "at most": needs the breakdown to exist, otherwise we can't tell
+      if (!(f.exposures[e.dim] || []).length || expo(f, e.dim, e.label) > (e.min ?? 0)) return false;
+    } else if (expo(f, e.dim, e.label) < (e.min ?? 0.0001)) return false;
+  }
   return true;
 }
 
@@ -332,16 +346,34 @@ function compareFunds(a, b) {
 
 // ================================================================== render: controls
 
-function chipHtml(attr, value, label, on) {
-  return `<button class="chip" data-${attr}="${esc(value)}" aria-pressed="${on}">${esc(label)}</button>`;
+// Include/exclude per option: off -> include -> exclude -> off.
+const TRI = { type: ["types", "xtypes"], geo: ["geos", "xgeos"], sector: ["sectors", "xsectors"] };
+function triState(kind, v) {
+  const [inc, exc] = TRI[kind];
+  return S[inc].includes(v) ? "in" : S[exc].includes(v) ? "out" : "";
+}
+function setTri(kind, v, state) {
+  const [inc, exc] = TRI[kind];
+  S[inc] = S[inc].filter((x) => x !== v);
+  S[exc] = S[exc].filter((x) => x !== v);
+  if (state === "in") S[inc].push(v);
+  if (state === "out") S[exc].push(v);
+}
+const nextTri = (st) => (st === "" ? "in" : st === "in" ? "out" : "");
+
+function chipHtml(kind, value, label) {
+  const st = triState(kind, value);
+  const said = st === "in" ? t("included") : st === "out" ? t("excluded") : "";
+  return `<button class="chip" data-${kind}="${esc(value)}" data-state="${st}" aria-pressed="${st === "in" ? "true" : st === "out" ? "mixed" : "false"}"
+    aria-label="${esc(label)}${said ? `: ${esc(said)}` : ""}" title="${esc(t("triHint"))}">${esc(label)}</button>`;
 }
 
 function renderFilterControls() {
   const present = new Set(FUNDS.map((f) => f.asset_class));
-  $("fTypes").innerHTML = TYPE_KEYS.filter((v) => present.has(v)).map((v) => chipHtml("type", v, typeName(v), S.types.includes(v))).join("");
-  $("fGeos").innerHTML = Object.keys(GEO_TESTS).map((k) => chipHtml("geo", k, L().geos[k], S.geos.includes(k))).join("");
-  const chipSectors = [...new Set([...SECTOR_COMMON, ...S.sectors])];
-  $("fSectors").innerHTML = chipSectors.map((s) => chipHtml("sector", s, sectorName(s), S.sectors.includes(s))).join("");
+  $("fTypes").innerHTML = TYPE_KEYS.filter((v) => present.has(v)).map((v) => chipHtml("type", v, typeName(v))).join("");
+  $("fGeos").innerHTML = Object.keys(GEO_TESTS).map((k) => chipHtml("geo", k, L().geos[k])).join("");
+  const chipSectors = [...new Set([...SECTOR_COMMON, ...S.sectors, ...S.xsectors])];
+  $("fSectors").innerHTML = chipSectors.map((s) => chipHtml("sector", s, sectorName(s))).join("");
   $("moreSectors").innerHTML = `<option value="">${esc(t("moreSectors"))}</option>` +
     (DIMS.sector || []).filter((s) => !chipSectors.includes(s)).map((s) => `<option value="${esc(s)}">${esc(sectorName(s))}</option>`).join("");
   document.querySelectorAll("#basis button").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.v === S.basis)));
@@ -362,7 +394,9 @@ function renderExps() {
     <div class="exp" data-i="${i}">
       <select data-k="dim" aria-label="${esc(t("fExpo"))}">${dims.map((d) => `<option value="${esc(d)}" ${d === e.dim ? "selected" : ""}>${esc(dimName(d))}</option>`).join("")}</select>
       <select data-k="label" aria-label="${esc(dimName(e.dim))}">${(DIMS[e.dim] || []).map((l) => `<option value="${esc(l)}" ${l === e.label ? "selected" : ""}>${esc(labelName(e.dim, l))}</option>`).join("")}</select>
-      <input data-k="min" type="number" min="0" max="100" step="1" value="${e.min ?? ""}" placeholder="≥ %" aria-label="≥ %">
+      <select data-k="op" class="exp-op" aria-label="${esc(t("expOp"))}">
+        <option value="ge" ${e.op !== "le" ? "selected" : ""}>≥</option><option value="le" ${e.op === "le" ? "selected" : ""}>≤</option></select>
+      <input data-k="min" type="number" min="0" max="100" step="1" value="${e.min ?? ""}" placeholder="%" aria-label="%">
       <button class="x" data-k="rm" aria-label="×">×</button>
     </div>`).join("");
 }
@@ -386,13 +420,16 @@ function activeFilters() {
   if (S.types.length) out.push({ col: "type", label: `${t("chipAsset")}: ${S.types.map(typeName).join(or)}`, clear: () => { S.types = []; } });
   if (S.geos.length) out.push({ col: "geo", label: `${t("chipGeo")}: ${S.geos.map((g) => L().geos[g]).join(or)}`, clear: () => { S.geos = []; } });
   if (S.sectors.length) out.push({ col: "sector", label: `${t("chipSector")}: ${S.sectors.map(sectorName).join(or)} ≥ ${pct(S.sectorMin ?? 0)}`, clear: () => { S.sectors = []; } });
+  if (S.xtypes.length) out.push({ col: "type", out: true, label: `${t("chipXAsset")}: ${S.xtypes.map(typeName).join(", ")}`, clear: () => { S.xtypes = []; } });
+  if (S.xgeos.length) out.push({ col: "geo", out: true, label: `${t("chipXGeo")}: ${S.xgeos.map((g) => L().geos[g]).join(", ")}`, clear: () => { S.xgeos = []; } });
+  if (S.xsectors.length) out.push({ col: "sector", out: true, label: `${t("chipXSector")}: ${S.xsectors.map(sectorName).join(", ")} ≥ ${pct(S.sectorMin ?? 0)}`, clear: () => { S.xsectors = []; } });
   for (const [col, [lo, hi, , kind]] of Object.entries(RANGES)) {
     const name = sortLabel(col);
     if (S[lo] != null) out.push({ col, label: `${name} ≥ ${rangeValue(kind, S[lo])}`, clear: () => { S[lo] = null; } });
     if (S[hi] != null) out.push({ col, label: `${name} ≤ ${rangeValue(kind, S[hi])}`, clear: () => { S[hi] = null; } });
   }
   S.exps.forEach((e) => out.push({
-    label: `${labelName(e.dim, e.label)} ≥ ${pct(e.min ?? 0)}`, clear: () => { S.exps = S.exps.filter((x) => x !== e); },
+    label: `${labelName(e.dim, e.label)} ${e.op === "le" ? "≤" : "≥"} ${pct(e.min ?? 0)}`, clear: () => { S.exps = S.exps.filter((x) => x !== e); },
   }));
   return out;
 }
@@ -410,7 +447,7 @@ function renderActiveBar() {
   }
   $("activeBar").innerHTML = head + ACTIVE.map((a, i) =>
     (i ? `<span class="muted-note">${esc(t("and"))}</span>` : "") +
-    `<span class="achip">${esc(a.label)}<button data-clear="${i}" aria-label="${esc(t("removeFilter", a.label))}">×</button></span>`).join("") +
+    `<span class="achip${a.out ? " out" : ""}">${esc(a.label)}<button data-clear="${i}" aria-label="${esc(t("removeFilter", a.label))}">×</button></span>`).join("") +
     `<button class="linkbtn" id="clearAll">${esc(t("clearAll"))}</button>` +
     (S.basis !== "nav" ? `<span class="muted-note">${esc(t("usesPrice"))}</span>` : "");
 }
@@ -446,7 +483,6 @@ function update(resetPaging = false) {
   $("countOf").textContent = rows.length === FUNDS.length ? t("etfs") : t("ofEtfs", FUNDS.length);
   renderActiveBar();
   renderSortBar();
-  renderSpot(rows);
 
   const empty = !rows.length;
   $("emptyState").hidden = !empty;
@@ -516,33 +552,6 @@ function renderCards(rows) {
   }).join("");
 }
 
-// ================================================================== spotlight band
-
-let spotTicker = null;
-function renderSpot(rows) {
-  const f = rows[0];
-  spotTicker = f?.ticker || null;
-  const r = S.sort[0];
-  if (!f) {
-    $("spotKicker").textContent = t("spotNone");
-    $("spotTitle").textContent = t("spotNoneT");
-    $("spotGlass").innerHTML = "";
-    return;
-  }
-  $("spotKicker").textContent = t("spotKicker", sortLabel(r.key), dirWord(r.key, r.dir));
-  $("spotTitle").textContent = f.name.replace(/^iShares /, "");
-  $("spotTitle").setAttribute("aria-label", t("openDetails", f.ticker, f.name));
-  const si = ret(f, "si");
-  $("spotGlass").innerHTML = `<div class="k">${esc(t("spotGlassK", f.ticker))}</div>
-    <div class="v">${isNum(si) ? signed(si, 1) : "—"}</div>
-    <div class="s">${esc(t("spotGlassS", (f.inception_date || "?").slice(0, 4), fmtPct(f.expense_ratio)))}</div>`;
-}
-$("spotTitle").addEventListener("click", () => spotTicker && openDrawer(spotTicker));
-$("dotsBtn").addEventListener("click", () => {
-  setPanel(true);
-  $("toolbar").scrollIntoView({ behavior: reducedMotion.matches ? "auto" : "smooth" });
-});
-
 // ================================================================== market clock
 
 // Regular trading sessions in each exchange's local time (minutes after midnight). Holidays not included.
@@ -580,29 +589,142 @@ function marketState(mk, now) {
 }
 
 function tickClock() {
-  const now = new Date();
-  const ny = marketState(MARKETS[0], now);
-  $("clkH").textContent = two(ny.t.h);
-  $("clkM").textContent = two(ny.t.m);
-  $("clkS").textContent = two(ny.t.s);
-  $("clkSUp").textContent = two((ny.t.s + 59) % 60);
-  $("clkSDown").textContent = two((ny.t.s + 1) % 60);
-  const when = ny.open ? t("closesIn", dur(ny.mins)) : t("opensIn", dur(ny.mins)) + (ny.day != null ? ` (${L().days[ny.day]} ${hm(ny.at)})` : "");
-  $("nyStatus").innerHTML = `<span class="sdot ${ny.open ? "open" : ""}"></span>${t("nyStatus", ny.open)} · ${esc(when)}`;
+  const ny = marketState(MARKETS[0], new Date());
+  const when = ny.open ? t("closesIn", dur(ny.mins)) : t("opensIn", dur(ny.mins));
+  $("nyStatus").innerHTML = `<span class="sdot ${ny.open ? "open" : ""}"></span>${t("mktPill", ny.open)}<span class="mkt-when"> · ${esc(when)}</span>`;
   $("nyStatus").title = t("hoursNote");
-
-  const me = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit", hour12: false }).format(now);
-  const zone = (Intl.DateTimeFormat().resolvedOptions().timeZone || "").split("/").pop().replace(/_/g, " ");
-  $("cities").innerHTML = `<div class="city me"><div class="n">${esc(t("yourTime"))}${zone ? ` <span class="ex">${esc(zone)}</span>` : ""}</div><div class="v">${esc(me)}</div></div>` +
-    MARKETS.slice(1).map((mk) => {
-      const st = marketState(mk, now);
-      const hours = mk.sessions.map(([o, c]) => hm(o) + "–" + hm(c)).join(", ");
-      return `<div class="city" title="${esc(t("cityTitle", mk.ex, hours))}">
-        <div class="n"><span class="sdot ${st.open ? "open" : ""}"></span>${esc(L().cities[mk.id])} <span class="ex">${esc(mk.ex)}</span></div>
-        <div class="v">${two(st.t.h)}:${two(st.t.m)}</div>
-        <div class="s">${esc(st.open ? t("openLeft", dur(st.mins)) : t("opensIn", dur(st.mins)))}</div></div>`;
-    }).join("");
 }
+
+// ================================================================== intro: promise, one button, a real example
+
+function goToScreener(focusSearch = false) {
+  $("etfs").scrollIntoView({ behavior: reducedMotion.matches ? "auto" : "smooth", block: "start" });
+  if (focusSearch) setTimeout(() => $("q").focus({ preventScroll: true }), reducedMotion.matches ? 0 : 450);
+}
+document.addEventListener("click", (ev) => {
+  if (ev.target.closest("[data-goto='etfs']")) goToScreener(ev.target.closest(".cta") != null);
+});
+
+function renderIntro() {
+  if (!FUNDS.length) return;
+  const d = META.imported_at ? new Date(META.imported_at) : null;
+  const date = d ? d.toLocaleDateString(LANG === "cs" ? "cs-CZ" : "en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
+  $("introMeta").textContent = t("introMeta", FUNDS.length, date);
+}
+
+// ================================================================== intro background: what's inside, drifting
+
+// Names of companies held by a few broad funds float slowly behind the headline. Bigger holdings are
+// larger and nearer; names fade out around the text so it always stays readable.
+const FIELD_FUNDS = ["IVV", "IEFA", "IEMG", "IJH", "IJR", "ACWI"];
+const field = { items: [], ctx: null, w: 0, h: 0, raf: 0, visible: true, mx: 0, my: 0, t0: 0 };
+
+async function startField() {
+  const canvas = $("introBg"); if (!canvas || !canvas.getContext) return;
+  const lists = await Promise.all(FIELD_FUNDS.map(async (tk) => { await loadHoldings(tk); return HOLDINGS[tk]; }));
+  const seen = new Set(), names = [];
+  for (const data of lists) {
+    if (!data || data === "missing") continue;
+    for (const h of data.holdings) {
+      if (h.asset_class && h.asset_class !== "Equity") continue;
+      const name = (h.about?.label || titleCase(h.name)).replace(/,?\s+(Inc\.?|Corp\.?|Corporation|plc|PLC|N\.V\.|S\.A\.|SA|AG|SE|Ltd\.?|Class [A-Z])$/i, "").trim();
+      if (!name || seen.has(name)) continue;
+      seen.add(name); names.push({ name, w: h.weight });
+    }
+  }
+  if (!names.length) return;
+  field.names = names;                      // biggest holdings first (files are sorted by weight)
+  field.ctx = canvas.getContext("2d");
+  const resize = () => {
+    const r = canvas.getBoundingClientRect(), dpr = Math.min(devicePixelRatio || 1, 2);
+    field.w = r.width; field.h = r.height;
+    canvas.width = Math.round(r.width * dpr); canvas.height = Math.round(r.height * dpr);
+    field.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    layoutField();
+    drawField(performance.now());
+  };
+  new ResizeObserver(resize).observe(canvas);
+  new IntersectionObserver(([e]) => { field.visible = e.isIntersecting; loopField(); }).observe(canvas);
+  document.addEventListener("visibilitychange", loopField);
+  reducedMotion.addEventListener?.("change", loopField);
+  addEventListener("pointermove", (ev) => {
+    field.mx = (ev.clientX / innerWidth - 0.5); field.my = (ev.clientY / innerHeight - 0.5);
+  }, { passive: true });
+  new MutationObserver(() => drawField(performance.now())).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  resize();
+  loopField();
+}
+
+function loopField() {
+  cancelAnimationFrame(field.raf);
+  if (!field.visible || document.hidden || reducedMotion.matches) return;   // still frame when paused
+  const step = (now) => { drawField(now); field.raf = requestAnimationFrame(step); };
+  field.raf = requestAnimationFrame(step);
+}
+
+// Calm horizontal lanes: each lane drifts at its own depth and speed, names in a lane never overlap.
+function layoutField() {
+  const { w, h, names } = field; if (!w || !names) return;
+  const ctx = field.ctx, laneCount = Math.max(6, Math.round(h / 62));
+  let seed = 11; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const lanes = Array.from({ length: laneCount }, (_, i) => {
+    const z = 0.3 + 0.7 * rnd();
+    return { y: (i + 0.5) / laneCount + (rnd() - 0.5) * 0.25 / laneCount, z, size: 12 + 16 * z,
+      speed: 6 + 16 * z, dir: i % 2 ? -1 : 1, items: [], len: 0 };
+  });
+  // nearer lanes get the bigger holdings
+  const byDepth = [...lanes].sort((a, b) => b.z - a.z);
+  const perLane = Math.max(3, Math.ceil((w / 340)));
+  names.slice(0, perLane * laneCount).forEach((n, i) => byDepth[i % laneCount].items.push({ text: n.name }));
+  for (const lane of lanes) {
+    ctx.font = `${lane.z > 0.75 ? 600 : 500} ${lane.size.toFixed(1)}px Inter, system-ui, sans-serif`;
+    let x = rnd() * 200;
+    for (const it of lane.items) { it.off = x; x += ctx.measureText(it.text).width + 140 + rnd() * 160; }
+    lane.len = Math.max(x, w + 400);
+  }
+  field.lanes = lanes;
+}
+
+function drawField(now) {
+  const { ctx, w, h, lanes } = field; if (!ctx || !w || !lanes) return;
+  const ink = getComputedStyle(document.documentElement).getPropertyValue("--ink").trim() || "#111";
+  const t = reducedMotion.matches ? 0 : now / 1000;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = ink;
+  ctx.textBaseline = "middle";
+  // the quiet zone around the headline and button: wide on phones, an ellipse on desktop
+  const cx = w / 2, cy = h * 0.5, rx = Math.max(w * 0.47, Math.min(w * 0.36, 560)), ry = h * 0.4;
+  for (const lane of lanes) {
+    ctx.font = `${lane.z > 0.75 ? 600 : 500} ${lane.size.toFixed(1)}px Inter, system-ui, sans-serif`;
+    const py0 = lane.y * h - field.my * 16 * lane.z;
+    for (const it of lane.items) {
+      const shift = (t * lane.speed * lane.dir) % lane.len;
+      const px = ((it.off + shift) % lane.len + lane.len) % lane.len - 200 - field.mx * 24 * lane.z;
+      const d = Math.hypot((px - cx) / rx, (py0 - cy) / ry);
+      const calm = Math.min(1, Math.max(0, (d - 0.85) / 0.5));
+      const edge = Math.max(0, Math.min(1, py0 / 70, (h - py0) / 90));
+      const alpha = (0.03 + 0.075 * lane.z) * calm * edge;
+      if (alpha < 0.004) continue;
+      ctx.globalAlpha = alpha;
+      ctx.fillText(it.text, px, py0);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ================================================================== theme: off-white by default, dark on request
+
+const theme = () => (document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+function renderThemeBtn() {
+  const label = t(theme() === "dark" ? "toLight" : "toDark");
+  $("themeBtn").setAttribute("aria-label", label);
+  $("themeBtn").title = label;
+}
+$("themeBtn").addEventListener("click", () => {
+  document.documentElement.dataset.theme = theme() === "dark" ? "light" : "dark";
+  lsSet("fs.theme", theme());
+  renderThemeBtn();
+});
 
 // ================================================================== events: controls
 
@@ -617,6 +739,7 @@ $("filterPanel").addEventListener("input", (ev) => {
     if (k === "dim") { e.dim = el.value; e.label = (DIMS[e.dim] || [])[0] || ""; renderExps(); }
     else if (k === "label") e.label = el.value;
     else if (k === "min") e.min = el.value === "" ? null : Number(el.value);
+    else if (k === "op") e.op = el.value === "le" ? "le" : "ge";
   } else if (NUM_FILTERS.includes(el.id)) {
     S[el.id] = el.value.trim() === "" || !isNum(Number(el.value)) ? null : Number(el.value);
   } else if (el.id === "sectorMin") {
@@ -631,15 +754,13 @@ $("filterPanel").addEventListener("input", (ev) => {
 $("filterPanel").addEventListener("click", (ev) => {
   const b = ev.target.closest("button"); if (!b) return;
   const d = b.dataset;
-  const toggle = (arr, v) => (arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
-  if ("type" in d) S.types = toggle(S.types, d.type);
-  else if ("geo" in d) S.geos = toggle(S.geos, d.geo);
-  else if ("sector" in d) S.sectors = toggle(S.sectors, d.sector);
+  const kind = ["type", "geo", "sector"].find((k) => k in d);
+  if (kind) setTri(kind, d[kind], nextTri(triState(kind, d[kind])));
   else if ("q" in d) { const k = b.parentElement.dataset.for; S[k] = Number(d.q); $(k).value = d.q; }
   else if (b.closest("#basis")) S.basis = d.v;
   else if (d.k === "rm") { S.exps.splice(+b.closest(".exp").dataset.i, 1); renderExps(); }
   else if (b.id === "addExp") {
-    S.exps.push({ dim: "region", label: (DIMS.region || []).includes("Europe") ? "Europe" : (DIMS.region || [""])[0], min: 50 });
+    S.exps.push({ dim: "region", label: (DIMS.region || []).includes("Europe") ? "Europe" : (DIMS.region || [""])[0], min: 50, op: "ge" });
     renderExps();
   } else return;
   changed();
@@ -732,14 +853,23 @@ function popAnchor() { return $("thead").querySelector(`[data-filter="${popCol}"
 function placePop() {
   const a = popAnchor(), pop = $("colPop");
   if (!a) { closePop(); return; }
-  const r = a.getBoundingClientRect(), w = pop.offsetWidth;
-  pop.style.top = `${Math.round(r.bottom + 8)}px`;
+  const r = a.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+  // open upwards when there isn't room below the header
+  const below = r.bottom + 8, above = r.top - 8 - h;
+  pop.style.top = `${Math.round(below + h > innerHeight - 8 && above > 8 ? above : Math.min(below, Math.max(8, innerHeight - h - 8)))}px`;
   pop.style.left = `${Math.round(Math.min(Math.max(8, r.right - w), innerWidth - w - 8))}px`;
 }
 
-function checkList(attr, items, selected) {
-  return `<div class="pchecks">${items.map(([v, label]) => `
-    <label><input type="checkbox" data-${attr}="${esc(v)}" ${selected.includes(v) ? "checked" : ""}> ${esc(label)}</label>`).join("")}</div>`;
+const ICON_IN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+const ICON_OUT = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M6.5 17.5l11-11"/></svg>';
+function triList(kind, items) {
+  return `<div class="ptri" role="list">${items.map(([v, label]) => {
+    const st = triState(kind, v);
+    return `<div class="ptri-row ${st}" role="listitem"><span class="ptri-label">${esc(label)}</span>
+      <button class="ptri-btn in" data-tri="${kind}" data-v="${esc(v)}" data-to="in" aria-pressed="${st === "in"}" aria-label="${esc(t("include"))}: ${esc(label)}" title="${esc(t("include"))}">${ICON_IN}</button>
+      <button class="ptri-btn out" data-tri="${kind}" data-v="${esc(v)}" data-to="out" aria-pressed="${st === "out"}" aria-label="${esc(t("exclude"))}: ${esc(label)}" title="${esc(t("exclude"))}">${ICON_OUT}</button>
+    </div>`;
+  }).join("")}</div>`;
 }
 
 function popBody(id) {
@@ -748,14 +878,14 @@ function popBody(id) {
   }
   if (id === "type") {
     const present = new Set(FUNDS.map((f) => f.asset_class));
-    return `<p class="phint">${esc(t("anyOfHint"))}</p>` + checkList("ptype", TYPE_KEYS.filter((k) => present.has(k)).map((k) => [k, typeName(k)]), S.types);
+    return `<p class="phint">${esc(t("triPopHint"))}</p>` + triList("type", TYPE_KEYS.filter((k) => present.has(k)).map((k) => [k, typeName(k)]));
   }
   if (id === "geo") {
-    return `<p class="phint">${esc(t("anyOfHint"))}</p>` + checkList("pgeo", Object.keys(GEO_TESTS).map((k) => [k, L().geos[k]]), S.geos);
+    return `<p class="phint">${esc(t("triPopHint"))}</p>` + triList("geo", Object.keys(GEO_TESTS).map((k) => [k, L().geos[k]]));
   }
   if (id === "sector") {
-    const items = [...new Set([...SECTOR_COMMON, ...S.sectors])].map((k) => [k, sectorName(k)]);
-    return `<p class="phint">${esc(t("anyOfHint"))}</p>` + checkList("psector", items, S.sectors) +
+    const items = [...new Set([...SECTOR_COMMON, ...S.sectors, ...S.xsectors])].map((k) => [k, sectorName(k)]);
+    return `<p class="phint">${esc(t("triPopHint"))}</p>` + triList("sector", items) +
       `<label class="pfield inline">${esc(t("atLeast"))} <input type="number" data-pk="sectorMin" min="0" max="100" step="5" value="${S.sectorMin ?? ""}"> %</label>`;
   }
   const [lo, hi, , kind] = RANGES[id];
@@ -796,26 +926,31 @@ function closePop(refocus = false) {
 
 function clearColFilter(id) {
   if (id === "etf") S.q = "";
-  else if (id === "type") S.types = [];
-  else if (id === "geo") S.geos = [];
-  else if (id === "sector") S.sectors = [];
+  else if (id === "type") { S.types = []; S.xtypes = []; }
+  else if (id === "geo") { S.geos = []; S.xgeos = []; }
+  else if (id === "sector") { S.sectors = []; S.xsectors = []; }
   else if (RANGES[id]) { S[RANGES[id][0]] = null; S[RANGES[id][1]] = null; }
 }
 
 $("colPop").addEventListener("input", (ev) => {
   const el = ev.target, d = el.dataset;
-  const toggle = (arr, v, on) => (on ? [...new Set([...arr, v])] : arr.filter((x) => x !== v));
   if (d.pk === "q") S.q = el.value.trim();
   else if (d.pk) S[d.pk] = el.value.trim() === "" || !isNum(Number(el.value)) ? null : Number(el.value);
-  else if ("ptype" in d) S.types = toggle(S.types, d.ptype, el.checked);
-  else if ("pgeo" in d) S.geos = toggle(S.geos, d.pgeo, el.checked);
-  else if ("psector" in d) S.sectors = toggle(S.sectors, d.psector, el.checked);
   else return;
   syncPanel();
   update(true);
   placePop();
 });
 $("colPop").addEventListener("click", (ev) => {
+  const tri = ev.target.closest("[data-tri]");
+  if (tri) {
+    const { tri: kind, v, to } = tri.dataset;
+    setTri(kind, v, triState(kind, v) === to ? "" : to);
+    syncPanel(); update(true);
+    const id = popCol, focusKey = `[data-tri="${kind}"][data-v="${CSS.escape(v)}"][data-to="${to}"]`;
+    openPop(id); $("colPop").querySelector(focusKey)?.focus();
+    return;
+  }
   const act = ev.target.closest("[data-pact]")?.dataset.pact; if (!act) return;
   if (act === "clear") { const id = popCol; clearColFilter(id); syncPanel(); update(true); openPop(id); }
   else closePop(true);
@@ -1181,6 +1316,9 @@ async function init() {
     update(true);
   };
   load();
+  renderIntro();
+  startField();
   window.addEventListener("hashchange", load);
+  if (location.hash.length > 1) requestAnimationFrame(() => $("etfs").scrollIntoView({ block: "start" }));
 }
 init();
