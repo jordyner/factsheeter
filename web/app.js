@@ -19,6 +19,7 @@ const RANGES = {
   fee: ["minFee", "maxFee", (f) => f.expense_ratio, "pct"],
   size: ["minAum", "maxAum", (f) => (isNum(f.net_assets) ? f.net_assets / 1e6 : null), "musd"],
   yield: ["minYield", "maxYield", (f) => f.ttm_yield, "pct"],
+  top10: ["minTop10", "maxTop10", (f) => f.conc?.top10 ?? null, "pct"],
 };
 const NUM_FILTERS = Object.values(RANGES).flatMap(([lo, hi]) => [lo, hi]);
 const blankFilters = () => ({
@@ -56,7 +57,61 @@ const typeName = (c) => L().types[c] || c || "—";
 const regionName = (r) => L().regions[r] || r;
 const sectorName = (s) => L().sectors[s] || s;
 const dimName = (d) => L().dims[d] || d.replace(/\//g, " / ");
-const labelName = (dim, l) => (dim === "region" ? regionName(l) : dim === "sector" ? sectorName(l) : l);
+const labelName = (dim, l) => (dim === "region" ? regionName(l) : dim === "sector" ? sectorName(l) : dim === "country" ? countryName(l)
+  : dim === "maturity" ? maturityName(l) : dim === "rating" ? ratingName(l) : l);
+const fundDesc = (f) => (LANG === "cs" && f.description_cs) || f.description || "";
+const subAssetName = (s) => (s && L().subAsset?.[s]) || s || "";
+// "3 - 5 Years" -> "3–5 let", "20+ Years", "91-120" (days, money-market funds)
+function maturityName(l) {
+  let m;
+  if ((m = /^(\d+)\s*-\s*(\d+)\s*years?$/i.exec(l))) return t("matRange", m[1], m[2]);
+  if ((m = /^(\d+)\+\s*years?$/i.exec(l))) return t("matPlus", m[1]);
+  if ((m = /^(\d+)\s*-\s*(\d+)$/.exec(l))) return t("matDays", m[1], m[2]);
+  if (/^cash/i.test(l)) return t("cashOther");
+  return l;
+}
+// "AA Rated" -> "AA", "Not Rated" -> "Bez ratingu"
+function ratingName(l) {
+  let m;
+  if ((m = /^([A-D]{1,3}[+-]?) rated$/i.exec(l))) return m[1].toUpperCase();
+  if (/^not rated$/i.test(l)) return t("notRated");
+  if (/^aaa or above$/i.test(l)) return t("aaaAbove");
+  if (/^cash/i.test(l)) return t("cashOther");
+  return l;
+}
+// "2026-10-01" or "Oct 01, 2026" -> "1 Oct 2026" / "1. 10. 2026"
+function fmtDate(s) {
+  if (!s) return "";
+  const iso = /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) + "T00:00:00Z" : s + " UTC";
+  const d = new Date(iso);
+  if (isNaN(d)) return s;
+  return LANG === "cs" ? `${d.getUTCDate()}. ${d.getUTCMonth() + 1}. ${d.getUTCFullYear()}`
+    : d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+}
+
+// "Denmark" -> "Dánsko": map iShares' English country names to ISO codes once, then ask the browser
+// for the name in the UI language. Unknown names stay as they are.
+const COUNTRY_CODE = (() => {
+  const map = {};
+  try {
+    const en = new Intl.DisplayNames(["en"], { type: "region" });
+    const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    for (const a of A) for (const b of A) {
+      const code = a + b, name = en.of(code);
+      if (name && name !== code) map[name.toLowerCase()] = code;
+    }
+    Object.assign(map, { "korea (south)": "KR", "south korea": "KR", "russian federation": "RU", "czech republic": "CZ",
+      "hong kong": "HK", "taiwan": "TW", "united states": "US", "turkey": "TR", "viet nam": "VN" });
+  } catch { /* old browser: names stay English */ }
+  return map;
+})();
+const countryNames = {};
+function countryName(name) {
+  if (LANG === "en" || !name) return name;
+  const code = COUNTRY_CODE[name.toLowerCase()];
+  if (!code) return name;
+  try { return (countryNames[LANG] ??= new Intl.DisplayNames([LANG], { type: "region" })).of(code) || name; } catch { return name; }
+}
 
 function applyStatic() {
   document.documentElement.lang = LANG;
@@ -108,7 +163,7 @@ function fmtBig(v) {
 function fmtAum(v) {
   if (!isNum(v)) return "—";
   const [n, unit] = v >= 1e9 ? [fx(v / 1e9, v >= 1e11 ? 0 : 1), ["B", "mld."]] : v >= 1e6 ? [fx(v / 1e6, 0), ["M", "mil."]] : [String(Math.round(v / 1e3)), ["K", "tis."]];
-  return LANG === "cs" ? `${n} ${unit[1]} $` : `$${n}${unit[0]}`;
+  return LANG === "cs" ? `${n} ${unit[1]} USD` : `$${n}${unit[0]}`;
 }
 function fmtAge(a, unit = true) {
   if (!isNum(a)) return "—";
@@ -159,12 +214,14 @@ const COLUMNS = [
   { id: "r3", unit: "ann", num: true, sortKey: "r3", ret: "3y" },
   { id: "r5", unit: "ann", num: true, sortKey: "r5", def: true, ret: "5y" },
   { id: "r10", unit: "ann", num: true, sortKey: "r10", def: true, ret: "10y" },
-  { id: "fee", num: true, sortKey: "fee", def: true },
+  { id: "geo", def: true, expo: "region" },
+  { id: "sector", def: true, expo: "sector" },
+  { id: "largest", sortKey: "largest" },
   { id: "size", num: true, sortKey: "size" },
   { id: "type", sortKey: "type" },
   { id: "yield", unit: "m12", num: true, sortKey: "yield" },
-  { id: "geo", def: true, expo: "region" },
-  { id: "sector", def: true, expo: "sector" },
+  { id: "fee", num: true, sortKey: "fee", def: true },
+  { id: "top10", num: true, sortKey: "top10", def: true },
 ];
 const colLabel = (c) => L().cols[c.id];
 const colUnit = (c) => (c.unit ? L().units[c.unit] : "");
@@ -184,6 +241,8 @@ const SORTS = {
   size: { get: (f) => f.net_assets, dir: -1 },
   type: { get: (f) => typeName(f.asset_class), dir: 1 },
   yield: { get: (f) => f.ttm_yield, dir: -1 },
+  top10: { get: (f) => f.conc?.top10 ?? null, dir: -1 },
+  largest: { get: (f) => f.conc?.top1?.weight ?? null, dir: -1 },
 };
 const sortLabel = (k) => L().sorts[k];
 const dirWord = (key, dir) => {
@@ -210,7 +269,7 @@ function cellHtml(c, f, i) {
         <span class="rank">${String(i + 1).padStart(2, "0")}</span>
         <input type="checkbox" data-cmp="${esc(f.ticker)}" ${on ? "checked" : ""} aria-label="${esc(t("compareT", f.ticker))}">
         <span class="tk">${esc(f.ticker)}</span>
-        <span class="nm" title="${esc(f.description || f.name)}">${esc(f.name.replace(/^iShares /, ""))}${isNum(a) && a < 5 ? `<span class="badge" title="${esc(t("newTitle"))}">${esc(t("newBadge"))}</span>` : ""}</span>
+        <span class="nm" title="${esc(fundDesc(f) || f.name)}">${esc(f.name.replace(/^iShares /, ""))}${isNum(a) && a < 5 ? `<span class="badge" title="${esc(t("newTitle"))}">${esc(t("newBadge"))}</span>` : ""}</span>
       </div>`;
     }
     case "age": return fmtAge(age(f), false);
@@ -219,6 +278,9 @@ function cellHtml(c, f, i) {
     case "size": return fmtAum(f.net_assets);
     case "type": return esc(typeName(f.asset_class));
     case "yield": return fmtPct(f.ttm_yield);
+    case "top10": return f.conc ? fmtPct(f.conc.top10, 1) : "—";
+    case "largest": return f.conc && f.conc.equity_top10 >= 6
+      ? `<span class="lg-name">${esc(companyName(f.conc.top1.name))}</span> <b>${pctSign(fx(f.conc.top1.weight, 1))}</b>` : "—";
     case "geo": {
       const list = f.exposures.region;
       if (!list || !list.length) return "—";
@@ -240,6 +302,8 @@ function cellHtml(c, f, i) {
 
 function isMissing(c, f) {
   if (c.ret) return !isNum(ret(f, c.ret));
+  if (c.id === "top10") return !f.conc;
+  if (c.id === "largest") return !(f.conc && f.conc.equity_top10 >= 6);
   if (c.expo) return !(f.exposures[c.expo] || []).length;
   return false;
 }
@@ -250,7 +314,7 @@ function isMissing(c, f) {
 const URL_NUMS = {
   si: "minSI", six: "maxSI", r5: "min5", r5x: "max5", r10: "min10", r10x: "max10", age: "minAge", fee: "maxFee", aum: "minAum",
   r1: "min1", r1x: "max1", r3: "min3", r3x: "max3", agex: "maxAge", feen: "minFee", aumx: "maxAum", yr: "minYear", yrx: "maxYear",
-  yl: "minYield", ylx: "maxYield",
+  yl: "minYield", ylx: "maxYield", t10: "minTop10", t10x: "maxTop10",
 };
 
 function saveUrl() {
@@ -301,11 +365,20 @@ function loadUrl() {
 
 // ================================================================== filtering + sorting
 
+// Search: accent-insensitive, every word must match, and longer words match by their stem so Czech
+// endings don't matter ("japonsko" finds "japonských", "zlato" finds "zlata").
+const fold = (v) => String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+function matchesSearch(f, q) {
+  f._hay ??= fold([f.ticker, f.name, f.isin, f.cusip, f.description, f.description_cs].join(" "));
+  return fold(q).split(/\s+/).filter(Boolean).every((w) => {
+    const stem = w.length > 4 ? w.slice(0, Math.max(4, w.length - 2)) : w;
+    // match from the start of a word, so "eden" doesn't hit "Sweden"
+    return new RegExp("(^|[^a-z0-9])" + stem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).test(f._hay);
+  });
+}
+
 function passes(f) {
-  if (S.q) {
-    const q = S.q.toLowerCase();
-    if (![f.ticker, f.name, f.isin, f.cusip, f.description].some((v) => v && v.toLowerCase().includes(q))) return false;
-  }
+  if (S.q && !matchesSearch(f, S.q)) return false;
   // within a category: OR
   if (S.types.length && !S.types.includes(f.asset_class)) return false;
   if (S.geos.length && !S.geos.some((g) => GEO_TESTS[g](f))) return false;
@@ -515,7 +588,7 @@ function renderTable(rows) {
       ? `<button class="thbtn" data-sort="${c.sortKey}" title="${esc(title ? title + ". " : "")}${esc(t("thSortHint"))}">${esc(colLabel(c))}${unit}${mark}</button>`
       : `${esc(colLabel(c))}${unit}`;
     const on = filteredCols.has(c.id);
-    const funnel = `<button class="thf ${on ? "on" : ""}" data-filter="${c.id}" aria-haspopup="dialog" aria-expanded="${popCol === c.id}"
+    const funnel = !(RANGES[c.id] || ["etf", "type", "geo", "sector"].includes(c.id)) ? "" : `<button class="thf ${on ? "on" : ""}" data-filter="${c.id}" aria-haspopup="dialog" aria-expanded="${popCol === c.id}"
       aria-label="${esc(t(on ? "filterColOn" : "filterCol", colLabel(c)))}" title="${esc(t(on ? "filterColOn" : "filterCol", colLabel(c)))}">${FUNNEL}</button>`;
     return `<th class="${c.num ? "num" : ""} ${c.sticky ? "sticky" : ""} ${sorted ? "sorted" : ""} ${on ? "filtered" : ""}"${ariaSort} scope="col"><span class="thwrap">${inner}${funnel}</span></th>`;
   }).join("");
@@ -541,7 +614,7 @@ function renderCards(rows) {
         <div><div class="tk">${esc(f.ticker)}${isNum(a) && a < 5 ? ` <span class="badge">${esc(t("newBadge"))}</span>` : ""}</div><div class="name">${esc(f.name)}</div></div>
         <button class="addcmp" data-cmp="${esc(f.ticker)}" aria-pressed="${on}" aria-label="${esc(t("compareT", f.ticker))}">${on ? "✓" : "+"}</button>
       </div>
-      ${f.description ? `<p class="desc">${esc(f.description)}</p>` : ""}
+      ${fundDesc(f) ? `<p class="desc">${esc(fundDesc(f))}</p>` : ""}
       <div class="big"><div class="label">${esc(h.label)}</div><div class="v">${fmtBig(h.v)}</div></div>
       <div class="facts">
         <div><div class="label">${esc(t("cost"))}</div><div class="v">${fmtPct(f.expense_ratio)}</div></div>
@@ -1004,6 +1077,45 @@ function bars(list, dim, limit) {
     <span class="v">${pctSign(fx(w, 1))}</span>`).join("")}</div>`;
 }
 
+// ------------------------------------------------------------------ "In short": what the fund depends on, in plain words
+
+function glanceHtml(f) {
+  const c = f.conc, rows = [];
+  const top = (dim) => (f.exposures[dim] || [])[0];
+  const isCompanies = c && c.equity_top10 >= 6;
+  let verdict = null, bar = "";
+  if (c) {
+    const level = isCompanies && (c.top1.weight >= 15 || c.top10 >= 60) ? "high" : c.top10 >= 35 ? "mid" : "low";
+    verdict = { level, label: t(`conc_${level}`) };
+    const first = isCompanies ? c.top1.weight : 0, next = Math.max(0, c.top10 - first), rest = Math.max(0, 100 - c.top10);
+    bar = `<div class="cbar" role="img" aria-label="${esc(t("concAria", pctSign(fx(c.top10, 0))))}">
+        ${first ? `<span class="c1" style="width:${first}%"></span>` : ""}<span class="c2" style="width:${next}%"></span><span class="c3" style="width:${rest}%"></span>
+      </div>
+      <div class="clegend">
+        ${first ? `<span><i class="c1"></i>${esc(companyName(c.top1.name))} ${pctSign(fx(first, 1))}</span>` : ""}
+        <span><i class="c2"></i>${esc(first ? t("concNext9") : t("concTop10"))} ${pctSign(fx(next, 1))}</span>
+        <span><i class="c3"></i>${esc(t("concRest", fmtInt(Math.max(0, (c.count || 0) - 10))))} ${pctSign(fx(rest, 1))}</span>
+      </div>`;
+    if (isCompanies && c.top1.weight >= 10) rows.push({ warn: true, text: t("glanceOneCo", esc(companyName(c.top1.name)), pctSign(fx(c.top1.weight, 1))) });
+    rows.push({ text: isCompanies ? t("glanceCompanies", c.count, fmtInt(c.count), pctSign(fx(c.top10, 0))) : t("glancePositions", c.count, fmtInt(c.count), pctSign(fx(c.top10, 0))) });
+  }
+  const sec = top("sector");
+  if (sec) rows.push({ text: t("glanceSector", esc(sectorName(sec[0])), pctSign(fx(sec[1], 0))) });
+  const ctry = top("country");
+  if (ctry) rows.push({ text: ctry[1] >= 99.5 ? t("glanceOneCountry", esc(countryName(ctry[0]))) : t("glanceCountry", esc(countryName(ctry[0])), pctSign(fx(ctry[1], 0))) });
+  if (isNum(f.expense_ratio)) rows.push({ text: t("glanceCost", pctSign(fx(f.expense_ratio, 2)), fmtMoney(f.expense_ratio * 100)) });
+  if (!rows.length) return "";
+  return `<section class="glance" aria-labelledby="glanceH">
+    <div class="glance-head"><h3 id="glanceH">${esc(t("inShort"))}</h3>${verdict ? `<span class="verdict ${verdict.level}">${esc(verdict.label)}</span>` : ""}</div>
+    ${bar}
+    <ul class="glance-list">${rows.map((r) => `<li class="${r.warn ? "warn" : ""}">${r.text}</li>`).join("")}</ul>
+    ${c ? `<p class="note">${esc(t("concNote", fmtDate(c.as_of) || "?"))}</p>` : ""}
+  </section>`;
+}
+// 3 -> "3", 53 -> "53", 0.5 -> "0.50" (cost per 10,000 invested)
+const fmtInt = (n) => Number(n || 0).toLocaleString(LANG === "cs" ? "cs-CZ" : "en-US");
+const fmtMoney = (v) => dec(v >= 10 || Number.isInteger(v) ? String(Math.round(v)) : v.toFixed(2));
+
 function exposureSections(f) {
   const order = ["region", "country", "sector", "maturity", "rating"];
   const dims = Object.keys(f.exposures).sort((a, b) => ((order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99)));
@@ -1013,7 +1125,7 @@ function exposureSections(f) {
     const notes = [];
     if (d === "region") notes.push(t("fromCountries"));
     if ((d === "region" || d === "country") && f.country_assumed) notes.push(t("assumed100"));
-    if (f.exposures_as_of[d]) notes.push(t("asOf", f.exposures_as_of[d]));
+    if (f.exposures_as_of[d]) notes.push(t("asOf", fmtDate(f.exposures_as_of[d])));
     const limit = list.length > 10 ? 10 : 0;
     return `<section id="dim-${esc(d)}"><div class="section-h"><h3>${esc(dimName(d))}</h3><span class="asof">${esc(notes.join(" · "))}</span></div>
       <div data-dim="${esc(d)}">${bars(list, d, limit)}</div>
@@ -1036,6 +1148,12 @@ async function loadHoldings(ticker) {
   if (drawerTicker === ticker && $("holdingsSec")) $("holdingsSec").innerHTML = holdingsHtml(ticker);
 }
 
+function companyName(raw) {
+  const s = /[a-z]/.test(raw) ? raw : titleCase(raw);
+  return s.replace(/\s+(Class|Cl)\s+[A-Z]$/i, "")
+    .replace(/,?\s+(Inc\.?|Corp\.?|Corporation|Company|Co\.?|plc|PLC|N\.?V\.?|S\.?A\.?|AG|SE|ASA|AB|Ltd\.?|Holdings?|Group)$/i, "").trim() || s;
+}
+
 const titleCase = (s) => s.toLowerCase().replace(/\b([a-z])/g, (c) => c.toUpperCase()).replace(/\b(Plc|Ag|Sa|Nv|Se|Inc|Corp|Ltd|Co)\b/g, (w) => w.toUpperCase());
 
 // Description in the UI language: Czech Wikipedia when available, otherwise English (marked as such).
@@ -1054,8 +1172,8 @@ function aboutTags(a) {
 function holdingRow(h, i) {
   const a = h.about, ab = aboutText(a), tags = aboutTags(a);
   const name = a?.label || titleCase(h.name);
-  const meta = [h.ticker && h.ticker !== "-" ? h.ticker : null, h.country,
-    h.maturity ? t("matures", h.maturity) : null, h.coupon ? t("coupon", pctSign(dec(h.coupon))) : null].filter(Boolean);
+  const meta = [h.ticker && h.ticker !== "-" ? h.ticker : null, h.country && countryName(h.country),
+    h.maturity ? t("matures", fmtDate(h.maturity)) : null, h.coupon ? t("coupon", pctSign(dec(h.coupon))) : null].filter(Boolean);
   const expandable = !!(ab || tags.length);
   const id = `hold-${i}`;
   const top = `<span class="hold-rank">${i + 1}</span>
@@ -1085,7 +1203,7 @@ function holdingsHtml(ticker, all = false) {
   const topSum = data.holdings.slice(0, HOLDINGS_SHOWN).reduce((s, h) => s + h.weight, 0);
   HOLD_MAX = Math.max(...data.holdings.map((h) => h.weight), 1);
   const anyAbout = list.some((h) => aboutText(h.about) || aboutTags(h.about).length);
-  return head(esc([t("positions", data.count), data.as_of ? t("asOf", data.as_of) : ""].filter(Boolean).join(" · "))) +
+  return head(esc([t("positions", fmtInt(data.count)), data.as_of ? t("asOf", fmtDate(data.as_of)) : ""].filter(Boolean).join(" · "))) +
     `<div class="hold-sumrow"><p class="hold-sum">${esc(t("topShare", Math.min(HOLDINGS_SHOWN, data.holdings.length), pctSign(fx(topSum, 1))))}</p>
       ${anyAbout ? `<button class="linkbtn" data-expandall="1">${esc(t("expandAll"))}</button>` : ""}</div>
     <ol class="holds">${list.map(holdingRow).join("")}</ol>
@@ -1141,7 +1259,8 @@ function openDrawer(ticker, focusDim) {
       <div><h2>${esc(f.ticker)}</h2><div class="name muted">${esc(f.name)}</div></div>
       <button class="x" id="closeDrawer" aria-label="${esc(t("closeDetails"))}">×</button>
     </div>
-    ${f.description ? `<div class="bubble"><p lang="en">${esc(f.description)}${t("descNote") ? `<span class="descnote" lang="${LANG}">${esc(t("descNote"))}</span>` : ""}</p></div>` : ""}
+    ${glanceHtml(f)}
+    ${fundDesc(f) ? `<div class="bubble"><p lang="${LANG === "cs" && f.description_cs ? "cs" : "en"}">${esc(fundDesc(f))}${t("descNote") ? `<span class="descnote" lang="${LANG}">${esc(t("descNote"))}</span>` : ""}</p></div>` : ""}
 
     <div class="dhero">
       <div class="label">${isNum(si) ? esc(t("annSince", f.inception_date.slice(0, 4))) : esc(t("tooNewAnn"))}</div>
@@ -1153,9 +1272,9 @@ function openDrawer(ticker, focusDim) {
 
     <div class="facts-grid">
       ${fact(t("expense"), fmtPct(f.expense_ratio), esc(t("perYearS")))}
-      ${fact(t("fundSize"), fmtAum(f.net_assets), f.net_assets_as_of ? esc(t("asOf", f.net_assets_as_of)) : "")}
-      ${fact(t("ageL"), fmtAge(a), f.inception_date ? esc(t("launchedOn", f.inception_date)) : "")}
-      ${fact(t("fAsset"), esc(typeName(f.asset_class)), esc(f.sub_asset_class || ""))}
+      ${fact(t("fundSize"), fmtAum(f.net_assets), f.net_assets_as_of ? esc(t("asOf", fmtDate(f.net_assets_as_of))) : "")}
+      ${fact(t("ageL"), fmtAge(a), f.inception_date ? esc(t("launchedOn", fmtDate(f.inception_date))) : "")}
+      ${fact(t("fAsset"), esc(typeName(f.asset_class)), esc(subAssetName(f.sub_asset_class)))}
       ${fact(t("mainRegion"), esc(region), esc(regionSub))}
       ${fact(t("yieldL"), fmtPct(f.ttm_yield), esc(t("trailing")))}
     </div>
@@ -1170,7 +1289,7 @@ function openDrawer(ticker, focusDim) {
 
     ${exposureSections(f)}
 
-    <div class="section-h"><h3>${esc(t("returns"))}</h3><span class="asof">${esc(basisLabel())} · ${esc(t("asOf", asOf || "?"))}</span></div>
+    <div class="section-h"><h3>${esc(t("returns"))}</h3><span class="asof">${esc(basisLabel())} · ${esc(t("asOf", fmtDate(asOf) || "?"))}</span></div>
     <table class="mini"><thead><tr><th>${esc(t("periodL"))}</th><th class="num">${esc(t("annualized"))}</th><th class="num">${esc(t("cumulative"))}</th></tr></thead><tbody>${retRows}</tbody></table>
     <p class="note">${esc(t("cumNote"))}</p>
 
@@ -1178,14 +1297,14 @@ function openDrawer(ticker, focusDim) {
     <dl class="kv">
       <dt>${esc(t("productPage"))}</dt><dd><a href="${esc(f.product_url)}" target="_blank" rel="noopener">ishares.com ↗</a></dd>
       <dt>${esc(t("factsheet"))}</dt><dd>${f.factsheet_url ? `<a href="${esc(f.factsheet_url)}" target="_blank" rel="noopener">PDF ↗</a>` : esc(t("notFound"))}</dd>
-      <dt>${esc(t("navAsOf"))}</dt><dd>${esc(f.nav_returns_as_of || "—")}</dd>
-      <dt>${esc(t("priceAsOf"))}</dt><dd>${esc(f.price_returns_as_of || "—")}</dd>
-      <dt>${esc(t("sizeAsOf"))}</dt><dd>${esc(f.net_assets_as_of || "—")}</dd>
-      <dt>${esc(t("fetched"))}</dt><dd>${esc((f.page_fetched_at || "").slice(0, 10) || "—")}</dd>
+      <dt>${esc(t("navAsOf"))}</dt><dd>${esc(fmtDate(f.nav_returns_as_of) || "—")}</dd>
+      <dt>${esc(t("priceAsOf"))}</dt><dd>${esc(fmtDate(f.price_returns_as_of) || "—")}</dd>
+      <dt>${esc(t("sizeAsOf"))}</dt><dd>${esc(fmtDate(f.net_assets_as_of) || "—")}</dd>
+      <dt>${esc(t("fetched"))}</dt><dd>${esc(fmtDate(f.page_fetched_at) || "—")}</dd>
       <dt>ISIN / CUSIP</dt><dd>${esc(f.isin || "—")} / ${esc(f.cusip || "—")}</dd>
       <dt>${esc(t("netGross"))}</dt><dd>${fmtPct(f.expense_ratio)} / ${fmtPct(f.gross_expense_ratio)}</dd>
     </dl>
-    <p class="note">${esc(t("snapNote", (META.imported_at || "").slice(0, 10)))}</p>`;
+    <p class="note">${esc(t("snapNote", fmtDate(META.imported_at)))}</p>`;
 
   $("drawer").hidden = false; $("overlay").hidden = false;
   $("drawer").querySelectorAll("[data-more]").forEach((b) => b.addEventListener("click", () => {
@@ -1251,7 +1370,7 @@ function openCompare() {
       <thead><tr><th></th>${fs.map((f) => `<th class="num">${esc(f.ticker)}</th>`).join("")}</tr></thead>
       <tbody>
         <tr><th>${esc(t("nameL"))}</th>${fs.map((f) => `<td class="num small wrap">${esc(f.name)}</td>`).join("")}</tr>
-        <tr><th>${esc(t("whatItDoes"))}</th>${fs.map((f) => `<td class="desc-cell" lang="en">${esc(f.description || "—")}</td>`).join("")}</tr>
+        <tr><th>${esc(t("whatItDoes"))}</th>${fs.map((f) => `<td class="desc-cell">${esc(fundDesc(f) || "—")}</td>`).join("")}</tr>
         ${sec(esc(t("basics")))}
         <tr><th>${esc(t("fAsset"))}</th>${fs.map((f) => `<td class="num">${esc(typeName(f.asset_class))}</td>`).join("")}</tr>
         <tr><th>${esc(t("launched"))}</th>${fs.map((f) => `<td class="num">${esc(f.inception_date || "—")}</td>`).join("")}</tr>

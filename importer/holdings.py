@@ -134,6 +134,8 @@ async def main() -> int:
     write(holdings)
     empty = [t for t, h in holdings.items() if not h["holdings"]]
     print(f"Done -> {OUT}: {len(holdings)} funds, {len(empty)} without positions, {len(failures)} failures")
+    from importer.export_static import export   # refresh per-fund concentration in funds.json
+    export()
     for t, msg in list(failures.items())[:10]:
         print("   ", t, msg)
     return 0

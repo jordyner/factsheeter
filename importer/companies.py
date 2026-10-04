@@ -26,6 +26,7 @@ from importer.holdings import OUT as HOLDINGS_DIR
 from importer.ishares_us import DATA
 
 CACHE = DATA / "cache" / "companies.json"
+CS_TEXT = DATA.parent / "translations" / "companies_cs.json"   # hand-written Czech, Wikidata id -> text
 MATCHES = DATA / "cache" / "company_matches.json"   # key -> Wikidata id, or "" when nothing matched
 UA = {"User-Agent": "factsheeter/0.1 (personal ETF research tool; low-rate)"}
 WD_API = "https://www.wikidata.org/w/api.php"
@@ -198,6 +199,8 @@ def main() -> int:
                     help="re-download Wikipedia/Wikidata details for companies already matched")
     ap.add_argument("--skip-names", action="store_true",
                     help="only match by ticker (fast); the slower name search can run later and resumes where it stopped")
+    ap.add_argument("--merge-only", action="store_true",
+                    help="no network: rebuild summaries from the cache and translations, then rewrite the holdings files")
     args = ap.parse_args()
 
     cache = {} if args.refresh or not CACHE.exists() else json.loads(CACHE.read_text())
@@ -207,7 +210,7 @@ def main() -> int:
         for h in json.loads(f.read_text())["holdings"][: args.top]:
             if h.get("asset_class") == "Equity" and h["ticker"] not in ("", "-"):
                 wanted.setdefault(f"{h['ticker']}|{h['name']}", h)
-    todo = {k: h for k, h in wanted.items() if k not in cache or (args.redescribe and cache[k])}
+    todo = {} if args.merge_only else {k: h for k, h in wanted.items() if k not in cache or (args.redescribe and cache[k])}
     print(f"{len(wanted)} companies in the top {args.top} of {len(files)} funds; {len(todo)} to look up")
 
     wiki = Wiki()
@@ -215,6 +218,8 @@ def main() -> int:
     match: dict[str, str] = {k: v for k, v in saved.items() if v}
     tried_name = {k for k, v in saved.items() if v == ""}
     save = lambda: MATCHES.write_text(json.dumps({**{k: "" for k in tried_name}, **match}))
+    if args.merge_only:
+        return merge(cache, files, wanted)
     # 1. ticker + exchange
     keys = list(todo)
     pending = [k for k in keys if k not in saved]
@@ -277,11 +282,21 @@ def main() -> int:
             "industry_cs": lab(claim_ids(e, "P452"), "cs")[:3],
             "products_cs": lab(claim_ids(e, "P1056"), "cs")[:5],
         }
+    return merge(cache, files, wanted)
+
+
+def merge(cache: dict, files: list, wanted: dict) -> int:
+    # Czech: our own rewrite first (written for readers, not word for word), else Czech Wikipedia's lead
+    cs_text = json.loads(CS_TEXT.read_text()) if CS_TEXT.exists() else {}
     for v in cache.values():
         if v and v.get("lead"):
             v["summary"] = lead_sentence(v["lead"])
-        if v and v.get("lead_cs"):
-            v["summary_cs"] = lead_sentence_cs(v["lead_cs"])
+        if v:
+            v.pop("summary_cs", None)
+            if cs_text.get(v.get("qid")):
+                v["summary_cs"] = cs_text[v["qid"]]
+            elif v.get("lead_cs"):
+                v["summary_cs"] = lead_sentence_cs(v["lead_cs"])
     CACHE.write_text(json.dumps(cache, indent=0))
 
     # 4. merge into the per-fund holdings files
@@ -297,6 +312,8 @@ def main() -> int:
         f.write_text(json.dumps(data, separators=(",", ":")))
     hits = sum(1 for k in wanted if cache.get(k))
     print(f"Done: {hits}/{len(wanted)} companies matched; {described} holdings rows now have a description")
+    from importer.export_static import export   # refresh per-fund concentration in funds.json
+    export()
     return 0
 
 
